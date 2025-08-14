@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -104,13 +105,13 @@ func NewKueuePrometheusScraper(opts KueuePrometheusScraperOpts) (*KueuePrometheu
 		MetricsPath:            "/metrics",
 		ServiceDiscoveryConfigs: discovery.Configs{
 			&kubernetes.SDConfig{
-				Role: kubernetes.RoleService,
+				Role: kubernetes.RolePod,
 				NamespaceDiscovery: kubernetes.NamespaceDiscovery{
 					Names: []string{kueueNamespace},
 				},
 				Selectors: []kubernetes.SelectorConfig{
 					{
-						Role:  kubernetes.RoleService,
+						Role:  kubernetes.RolePod,
 						Label: fmt.Sprintf("%s,%s", kueueNameLabelSelector, kueueComponentLabelSelector),
 						Field: kueueServiceFieldSelector,
 					},
@@ -133,6 +134,20 @@ func NewKueuePrometheusScraper(opts KueuePrometheusScraperOpts) (*KueuePrometheu
 
 	promFactory := prometheusreceiver.NewFactory()
 	promReceiver, err := promFactory.CreateMetrics(opts.Ctx, params, &promConfig, opts.Consumer)
+	fmt.Printf("\n=== Prometheus Receiver Details get actual datas ===+++___\n")
+	fmt.Printf("Receiver created: %v\n", promReceiver != nil)
+	fmt.Printf("Configuration:\n")
+	fmt.Printf("- Job Name: %s\n", kmJobName)
+	fmt.Printf("- Scrape Interval: %v\n", kmCollectionInterval)
+	fmt.Printf("- Metrics Path: %s\n", scrapeConfig.MetricsPath)
+	fmt.Printf("- Target Namespace: %s\n", kueueNamespace)
+
+	// Print scrape config details
+	fmt.Printf("\nScrape Configuration:\n")
+	fmt.Printf("- Scheme: %s\n", scrapeConfig.Scheme)
+	fmt.Printf("- Honor Timestamps: %v\n", scrapeConfig.HonorTimestamps)
+	fmt.Printf("- Metrics Path: %s\n", scrapeConfig.MetricsPath)
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to create prometheus receiver for kueue metrics: %w", err)
 	}
@@ -147,7 +162,18 @@ func NewKueuePrometheusScraper(opts KueuePrometheusScraperOpts) (*KueuePrometheu
 }
 
 func GetKueueRelabelConfigs(clusterName string) []*relabel.Config {
+	fmt.Printf("\n=== Starting Relabel Config ===+++___\n")
+	fmt.Printf("Node Name: %s\n", os.Getenv("HOST_NAME"))
+	fmt.Printf("Cluster Name: %s\n", clusterName)
+	fmt.Printf("Kueue Name: %s\n", string(model.LabelName("__meta_kubernetes_pod_node_name")))
+	fmt.Printf("Testing please")
+
 	relabelConfigs := []*relabel.Config{
+		{ // Keep only if on same node
+			Action:       relabel.Keep,
+			SourceLabels: model.LabelNames{model.LabelName("__meta_kubernetes_pod_node_name")},
+			Regex:        relabel.MustNewRegexp(os.Getenv("HOST_NAME")),
+		},
 		{ // filter by metric name: keep only the Kueue metrics specified via regex in `kueueMetricAllowList`
 			Action:       relabel.Keep,
 			Regex:        relabel.MustNewRegexp(kueueMetricsAllowRegex),
@@ -190,6 +216,36 @@ func GetKueueRelabelConfigs(clusterName string) []*relabel.Config {
 			},
 		)
 	}
+	fmt.Printf("Created relabel configs+++___: configCount=%d, serviceNameRegex=%s, nodeNameRegex=%s\n",
+		len(relabelConfigs),
+		"kueue-controller-manager-metrics-service",
+		os.Getenv("HOST_NAME"),
+	)
+	fmt.Printf("\n=== Detailed Relabel Configs ===\n")
+	for i, config := range relabelConfigs {
+		fmt.Printf("\nConfig #%d:\n", i+1)
+		fmt.Printf("  Action: %s\n", config.Action)
+
+		// Print source labels
+		if len(config.SourceLabels) > 0 {
+			fmt.Printf("  SourceLabels: %v\n", config.SourceLabels)
+		}
+
+		// Print target label
+		if config.TargetLabel != "" {
+			fmt.Printf("  TargetLabel: %s\n", config.TargetLabel)
+		}
+
+		// Print replacement
+		if config.Replacement != "" {
+			fmt.Printf("  Replacement: %s\n", config.Replacement)
+		}
+
+		fmt.Printf("  ---\n")
+	}
+
+	fmt.Printf("\nTotal configs: %d\n", len(relabelConfigs))
+	fmt.Printf("===========================\n\n")
 	return relabelConfigs
 }
 
